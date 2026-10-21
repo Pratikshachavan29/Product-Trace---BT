@@ -105,6 +105,13 @@ export function saveProduct(productInput) {
   const updated = [newProduct, ...current]
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(updated))
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(
+        new CustomEvent('producttrace_storage_update', {
+          detail: { productId: newProduct.id, product: newProduct },
+        })
+      )
+    }
   } catch (err) {
     console.error('Failed to write to localStorage:', err)
     return { success: false, error: 'Could not save product to browser storage.' }
@@ -113,33 +120,110 @@ export function saveProduct(productInput) {
   return { success: true, product: newProduct }
 }
 
-export function updateProductStage(productId, newStage, newStatus, location = '', handler = '') {
+export const STAGE_SEQUENCE = ['Manufacturer', 'Distributor', 'Retailer', 'Customer']
+
+export const STAGE_TRANSITIONS = {
+  Manufacturer: {
+    nextStage: 'Distributor',
+    nextStatus: 'In Transit',
+    actionLabel: 'Transfer to Distributor',
+    role: 'Logistics Partner',
+    defaultLocationHint: 'e.g. Regional Freight Hub, Atlanta GA',
+    defaultHandlerHint: 'e.g. Apex Freight Logistics Co.',
+  },
+  Distributor: {
+    nextStage: 'Retailer',
+    nextStatus: 'In Transit',
+    actionLabel: 'Transfer to Retail Store',
+    role: 'Store Merchant',
+    defaultLocationHint: 'e.g. Metro Retail Warehouse, Chicago IL',
+    defaultHandlerHint: 'e.g. Midwest Retail Distribution LLC',
+  },
+  Retailer: {
+    nextStage: 'Customer',
+    nextStatus: 'Delivered',
+    actionLabel: 'Deliver to End Consumer',
+    role: 'End Consumer',
+    defaultLocationHint: 'e.g. 742 Evergreen Terrace, Springfield',
+    defaultHandlerHint: 'e.g. Consumer Direct Handover',
+  },
+}
+
+export function getNextStageInfo(currentStage) {
+  if (!currentStage) return null
+  return STAGE_TRANSITIONS[currentStage] || null
+}
+
+export function recordHandover({ productId, receivingParty, location, notes = '' }) {
+  if (!productId) {
+    return { success: false, error: 'Product ID is required.' }
+  }
+
   const current = getStoredProducts()
   const normalizedId = String(productId).trim().toLowerCase()
   const index = current.findIndex((item) => (item?.id ? String(item.id).trim().toLowerCase() === normalizedId : false))
 
   if (index === -1) {
-    return { success: false, error: 'Product not found.' }
+    return { success: false, error: `Product with ID "${productId}" not found in registry.` }
   }
 
-  const existing = current[index]
-  const timestamp = formatDateTime(new Date())
+  const product = current[index]
+  const currentStage = product.stage || 'Manufacturer'
 
-  const historyEntry = {
-    stage: newStage,
-    status: newStatus,
-    location: location || existing.originLocation || 'Regional Facility',
-    handler: handler || `${newStage} Operations`,
+  // Check if journey is already completed
+  if (currentStage === 'Customer' && product.status === 'Delivered') {
+    return {
+      success: false,
+      error: 'Product has already completed all supply-chain stages (Delivered to Customer). No further handovers can be recorded.',
+    }
+  }
+
+  const transition = STAGE_TRANSITIONS[currentStage]
+  if (!transition) {
+    return {
+      success: false,
+      error: `Cannot advance product from unsupported stage "${currentStage}".`,
+    }
+  }
+
+  const trimmedHandler = String(receivingParty || '').trim()
+  if (!trimmedHandler) {
+    return { success: false, error: 'Receiving party / organization name is required.' }
+  }
+
+  const trimmedLocation = String(location || '').trim()
+  if (!trimmedLocation) {
+    return { success: false, error: 'Handover location is required.' }
+  }
+
+  const trimmedNotes = String(notes || '').trim()
+
+  // Prevent duplicate milestone
+  const existingMilestones = Array.isArray(product.history) ? product.history : []
+  const isDuplicate = existingMilestones.some((m) => m?.stage === transition.nextStage)
+  if (isDuplicate) {
+    return {
+      success: false,
+      error: `Handover milestone for "${transition.nextStage}" has already been recorded.`,
+    }
+  }
+
+  const timestamp = formatDateTime(new Date())
+  const newEntry = {
+    stage: transition.nextStage,
+    status: transition.nextStatus,
+    location: trimmedLocation,
+    handler: trimmedHandler,
     timestamp,
-    note: `Handover recorded at ${newStage} milestone.`,
+    note: trimmedNotes || `Handover completed at ${transition.nextStage} stage.`,
   }
 
   const updatedProduct = {
-    ...existing,
-    stage: newStage,
-    status: newStatus,
+    ...product,
+    stage: transition.nextStage,
+    status: transition.nextStatus,
     updated: timestamp,
-    history: existing.history ? [...existing.history, historyEntry] : [historyEntry],
+    history: [...existingMilestones, newEntry],
   }
 
   const updatedList = [...current]
@@ -147,12 +231,28 @@ export function updateProductStage(productId, newStage, newStatus, location = ''
 
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedList))
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(
+        new CustomEvent('producttrace_storage_update', {
+          detail: { productId: product.id, updatedProduct },
+        })
+      )
+    }
   } catch (err) {
     console.error('Failed to update product in localStorage:', err)
-    return { success: false, error: 'Could not update product record.' }
+    return { success: false, error: 'Could not write handover record to browser storage.' }
   }
 
-  return { success: true, product: updatedProduct }
+  return { success: true, product: updatedProduct, transition }
+}
+
+export function updateProductStage(productId, newStage, newStatus, location = '', handler = '') {
+  return recordHandover({
+    productId,
+    receivingParty: handler,
+    location,
+    notes: `Handover recorded at ${newStage} milestone.`,
+  })
 }
 
 // Generates a deterministic simulated hash for demonstrating cryptographic tamper-evidence

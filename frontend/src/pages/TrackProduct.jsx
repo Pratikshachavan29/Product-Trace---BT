@@ -1,5 +1,10 @@
 import { useState, useEffect, useMemo } from 'react'
-import { getStoredProducts, getProductById, updateProductStage } from '../utils/storage.js'
+import {
+  getStoredProducts,
+  getProductById,
+  recordHandover,
+  getNextStageInfo,
+} from '../utils/storage.js'
 
 const statusClass = {
   'In Transit': 'badge-blue',
@@ -46,27 +51,6 @@ const STAGE_STEPS = [
     defaultHandler: 'End Consumer Handover',
   },
 ]
-
-const NEXT_STAGE_MAP = {
-  Manufacturer: {
-    nextStage: 'Distributor',
-    nextStatus: 'In Transit',
-    buttonLabel: 'Dispatch to Distributor (Mark In Transit)',
-    handler: 'Regional Logistics Freight Hub',
-  },
-  Distributor: {
-    nextStage: 'Retailer',
-    nextStatus: 'In Transit',
-    buttonLabel: 'Receive at Retail Store (Mark In Transit)',
-    handler: 'Retail Center Receiving',
-  },
-  Retailer: {
-    nextStage: 'Customer',
-    nextStatus: 'Delivered',
-    buttonLabel: 'Confirm Customer Delivery (Mark Delivered)',
-    handler: 'Final Consumer Handover',
-  },
-}
 
 function resolveMilestoneData(product, stageId) {
   if (!product) return null
@@ -131,7 +115,20 @@ export default function TrackProduct({ onNavigate, navParams }) {
   const [activeProduct, setActiveProduct] = useState(null)
   const [searchError, setSearchError] = useState('')
   const [allProducts, setAllProducts] = useState([])
-  const [updateFeedback, setUpdateFeedback] = useState('')
+  
+  // Handover form state
+  const [receivingParty, setReceivingParty] = useState('')
+  const [handoverLocation, setHandoverLocation] = useState('')
+  const [handoverNotes, setHandoverNotes] = useState('')
+  const [handoverErrors, setHandoverErrors] = useState({})
+  const [handoverConfirmation, setHandoverConfirmation] = useState(null)
+
+  function resetHandoverForm() {
+    setReceivingParty('')
+    setHandoverLocation('')
+    setHandoverNotes('')
+    setHandoverErrors({})
+  }
 
   // Load available products from storage
   useEffect(() => {
@@ -149,9 +146,29 @@ export default function TrackProduct({ onNavigate, navParams }) {
     }
   }, [navParams])
 
+  // Real-time synchronization with localStorage changes
+  useEffect(() => {
+    function handleStorageSync() {
+      const list = getStoredProducts()
+      setAllProducts(list)
+      if (activeProduct?.id) {
+        const match = getProductById(activeProduct.id)
+        if (match) setActiveProduct(match)
+      }
+    }
+
+    window.addEventListener('storage', handleStorageSync)
+    window.addEventListener('producttrace_storage_update', handleStorageSync)
+    return () => {
+      window.removeEventListener('storage', handleStorageSync)
+      window.removeEventListener('producttrace_storage_update', handleStorageSync)
+    }
+  }, [activeProduct?.id])
+
   function handleSearch(e) {
     if (e) e.preventDefault()
-    setUpdateFeedback('')
+    setHandoverConfirmation(null)
+    resetHandoverForm()
 
     const trimmed = searchId.trim()
     if (!trimmed) {
@@ -174,7 +191,8 @@ export default function TrackProduct({ onNavigate, navParams }) {
   function handleQuickSelect(id) {
     if (!id) return
     setSearchId(id)
-    setUpdateFeedback('')
+    setHandoverConfirmation(null)
+    resetHandoverForm()
     const match = getProductById(id)
     if (match) {
       setActiveProduct(match)
@@ -182,24 +200,48 @@ export default function TrackProduct({ onNavigate, navParams }) {
     }
   }
 
-  function handleAdvanceStage() {
-    if (!activeProduct) return
-    const transition = NEXT_STAGE_MAP[activeProduct.stage]
-    if (!transition) return
+  function handleSubmitHandover(e) {
+    if (e) e.preventDefault()
+    setHandoverConfirmation(null)
 
-    const res = updateProductStage(
-      activeProduct.id,
-      transition.nextStage,
-      transition.nextStatus,
-      activeProduct.originLocation || 'Regional Distribution Hub',
-      transition.handler
-    )
-
-    if (res.success) {
-      setActiveProduct(res.product)
-      setAllProducts(getStoredProducts())
-      setUpdateFeedback(`Recorded handover milestone to ${transition.nextStage} stage!`)
+    const errors = {}
+    if (!receivingParty.trim()) {
+      errors.receivingParty = 'Receiving party / organization name is required.'
     }
+    if (!handoverLocation.trim()) {
+      errors.location = 'Handover location & facility is required.'
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setHandoverErrors(errors)
+      return
+    }
+
+    setHandoverErrors({})
+
+    const res = recordHandover({
+      productId: activeProduct.id,
+      receivingParty: receivingParty.trim(),
+      location: handoverLocation.trim(),
+      notes: handoverNotes.trim(),
+    })
+
+    if (!res.success) {
+      setHandoverErrors({ form: res.error || 'Could not record handover.' })
+      return
+    }
+
+    setActiveProduct(res.product)
+    setAllProducts(getStoredProducts())
+    setHandoverConfirmation({
+      stage: res.product.stage,
+      status: res.product.status,
+      timestamp: res.product.updated,
+      handler: receivingParty.trim(),
+      location: handoverLocation.trim(),
+      notes: handoverNotes.trim(),
+    })
+    resetHandoverForm()
   }
 
   const stageOrder = ['Manufacturer', 'Distributor', 'Retailer', 'Customer']
@@ -214,6 +256,16 @@ export default function TrackProduct({ onNavigate, navParams }) {
     if (activeProduct.stage === 'Customer' && activeProduct.status === 'Delivered') return 100
     return Math.min(100, Math.round(((currentStageIndex + 1) / 4) * 100))
   }, [activeProduct, currentStageIndex])
+
+  const nextStageInfo = useMemo(() => {
+    if (!activeProduct) return null
+    return getNextStageInfo(activeProduct.stage)
+  }, [activeProduct])
+
+  const isJourneyComplete = useMemo(() => {
+    if (!activeProduct) return false
+    return activeProduct.stage === 'Customer' && activeProduct.status === 'Delivered'
+  }, [activeProduct])
 
   return (
     <section className="page track-page">
@@ -328,12 +380,17 @@ export default function TrackProduct({ onNavigate, navParams }) {
         </div>
       )}
 
-      {/* Success Notification */}
-      {updateFeedback && (
-        <div className="alert alert-success" role="status">
-          <div>
-            <p className="alert-title">✓ Milestone Recorded</p>
-            <p className="alert-desc">{updateFeedback} Recorded in local ledger and reflected on dashboard.</p>
+      {/* Handover Confirmation Notification */}
+      {handoverConfirmation && (
+        <div className="alert alert-success handover-confirm-banner" role="status">
+          <div className="confirm-icon-badge" aria-hidden="true">✓</div>
+          <div className="confirm-body">
+            <p className="alert-title">Supply-Chain Handover Confirmed & Stored</p>
+            <p className="alert-desc">
+              Advanced to <strong>{handoverConfirmation.stage}</strong> stage (Status: <strong>{handoverConfirmation.status}</strong>).
+              Logged at <strong>{handoverConfirmation.timestamp}</strong> at <em>{handoverConfirmation.location}</em> by <em>{handoverConfirmation.handler}</em>.
+              {handoverConfirmation.notes ? ` Remarks: "${handoverConfirmation.notes}"` : ''} Stored permanently in local ledger and reflected on dashboard.
+            </p>
           </div>
         </div>
       )}
@@ -518,22 +575,138 @@ export default function TrackProduct({ onNavigate, navParams }) {
               })}
             </div>
 
-            {/* Advance Stage Milestone Progression Action */}
-            {NEXT_STAGE_MAP[activeProduct.stage] && (
-              <div className="stage-advance-bar">
+            {/* End-to-End Completed State */}
+            {isJourneyComplete && (
+              <div className="card journey-complete-card">
+                <div className="journey-complete-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" strokeWidth="2.2">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                    <polyline points="22 4 12 14.01 9 11.01" />
+                  </svg>
+                </div>
                 <div>
-                  <h4 className="advance-title">Record Next Supply-Chain Milestone</h4>
-                  <p className="advance-desc">
-                    Advance product tracking to the next stage. Handover timestamp and facility details will be stored permanently in local storage.
+                  <div className="complete-status-badge">✓ End-to-End Complete</div>
+                  <h4 className="complete-title">Full Supply-Chain Journey Completed</h4>
+                  <p className="complete-desc">
+                    This product has reached the end consumer and is confirmed as Delivered. All 4 supply-chain milestones have been verified and permanently recorded. Duplicate handovers are locked.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={handleAdvanceStage}
-                >
-                  {NEXT_STAGE_MAP[activeProduct.stage].buttonLabel} &rarr;
-                </button>
+              </div>
+            )}
+
+            {/* Functional Supply-Chain Handover Form */}
+            {!isJourneyComplete && nextStageInfo && (
+              <div className="card handover-card">
+                <div className="handover-header">
+                  <div>
+                    <span className="handover-kicker">Sequential Custody Handover</span>
+                    <h4 className="handover-title">Record Next Supply-Chain Handover</h4>
+                    <p className="handover-subtitle">
+                      Transfer product custody to the next sequential supply-chain partner. Stages cannot be skipped.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Stage Progression Banner */}
+                <div className="handover-progression-bar">
+                  <div className="progression-pill current">
+                    <span className="prog-label">Current Stage</span>
+                    <span className="prog-value">{activeProduct.stage}</span>
+                  </div>
+                  <div className="progression-arrow" aria-hidden="true">&rarr;</div>
+                  <div className="progression-pill target">
+                    <span className="prog-label">Next Required Stage</span>
+                    <span className="prog-value">{nextStageInfo.nextStage}</span>
+                  </div>
+                  <div className="progression-status-target">
+                    New Status: <span className="mono">{nextStageInfo.nextStatus}</span>
+                  </div>
+                </div>
+
+                {handoverErrors.form && (
+                  <div className="alert alert-error" role="alert" style={{ marginBottom: 16 }}>
+                    <div>
+                      <p className="alert-title">Handover Validation Error</p>
+                      <p className="alert-desc">{handoverErrors.form}</p>
+                    </div>
+                  </div>
+                )}
+
+                <form onSubmit={handleSubmitHandover} className="handover-form">
+                  <div className="handover-form-grid">
+                    <div className="handover-input-group">
+                      <label htmlFor="receivingParty" className="handover-label">
+                        Receiving Party / Organization <span className="req">*</span>
+                      </label>
+                      <input
+                        id="receivingParty"
+                        type="text"
+                        value={receivingParty}
+                        onChange={(e) => {
+                          setReceivingParty(e.target.value)
+                          if (handoverErrors.receivingParty) setHandoverErrors((prev) => ({ ...prev, receivingParty: null }))
+                        }}
+                        placeholder={nextStageInfo.defaultHandlerHint}
+                        className={`handover-input ${handoverErrors.receivingParty ? 'input-error' : ''}`}
+                      />
+                      {handoverErrors.receivingParty ? (
+                        <span className="handover-error-text">{handoverErrors.receivingParty}</span>
+                      ) : (
+                        <span className="handover-help-text">Authorized company, handler, or recipient name.</span>
+                      )}
+                    </div>
+
+                    <div className="handover-input-group">
+                      <label htmlFor="handoverLocation" className="handover-label">
+                        Handover Facility & Location <span className="req">*</span>
+                      </label>
+                      <input
+                        id="handoverLocation"
+                        type="text"
+                        value={handoverLocation}
+                        onChange={(e) => {
+                          setHandoverLocation(e.target.value)
+                          if (handoverErrors.location) setHandoverErrors((prev) => ({ ...prev, location: null }))
+                        }}
+                        placeholder={nextStageInfo.defaultLocationHint}
+                        className={`handover-input ${handoverErrors.location ? 'input-error' : ''}`}
+                      />
+                      {handoverErrors.location ? (
+                        <span className="handover-error-text">{handoverErrors.location}</span>
+                      ) : (
+                        <span className="handover-help-text">City, regional hub, distribution center, or destination.</span>
+                      )}
+                    </div>
+
+                    <div className="handover-input-group full-span">
+                      <label htmlFor="handoverNotes" className="handover-label">
+                        Handover Notes / Verification Remarks <span className="opt">(Optional)</span>
+                      </label>
+                      <input
+                        id="handoverNotes"
+                        type="text"
+                        value={handoverNotes}
+                        onChange={(e) => setHandoverNotes(e.target.value)}
+                        placeholder="e.g. Temperature checks passed, freight seal intact, quantity verified."
+                        className="handover-input"
+                      />
+                      <span className="handover-help-text">Condition notes, inspection timestamps, or seal numbers.</span>
+                    </div>
+                  </div>
+
+                  <div className="handover-footer-bar">
+                    <button type="submit" className="btn btn-handover">
+                      {nextStageInfo.actionLabel} &rarr;
+                    </button>
+                    <span className="handover-audit-tag">
+                      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 4 }}>
+                        <circle cx="12" cy="12" r="10" />
+                        <polyline points="12 6 12 12 16 14" />
+                      </svg>
+                      Actual timestamp will be captured upon submission
+                    </span>
+                  </div>
+                </form>
               </div>
             )}
           </div>

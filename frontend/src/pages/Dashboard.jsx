@@ -58,10 +58,16 @@ export default function Dashboard({ onNavigate }) {
       setProducts(getStoredProducts())
     }
 
+    function handleCustomUpdate() {
+      setProducts(getStoredProducts())
+    }
+
     window.addEventListener('storage', handleStorageChange)
+    window.addEventListener('producttrace_storage_update', handleCustomUpdate)
     window.addEventListener('focus', handleFocus)
     return () => {
       window.removeEventListener('storage', handleStorageChange)
+      window.removeEventListener('producttrace_storage_update', handleCustomUpdate)
       window.removeEventListener('focus', handleFocus)
     }
   }, [])
