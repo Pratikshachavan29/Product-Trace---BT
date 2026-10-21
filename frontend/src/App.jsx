@@ -14,11 +14,18 @@ const pages = {
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState('dashboard')
-  const Page = pages[currentPage]
+  const [navParams, setNavParams] = useState(null)
+
+  function handleNavigate(page, params = null) {
+    setCurrentPage(page)
+    setNavParams(params)
+  }
+
+  const Page = pages[currentPage] || Dashboard
 
   return (
-    <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
-      <Page onNavigate={setCurrentPage} />
+    <Layout currentPage={currentPage} onNavigate={handleNavigate}>
+      <Page onNavigate={handleNavigate} navParams={navParams} />
     </Layout>
   )
 }

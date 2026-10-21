@@ -1,55 +1,33 @@
 const STORAGE_KEY = 'producttrace_products'
 
-export const DEFAULT_PRODUCTS = [
+export const SUPPLY_CHAIN_STAGES = [
   {
-    id: 'PT-10482',
-    name: 'Organic Green Tea',
-    manufacturer: 'Kyoto Farms Co.',
-    manufacturingDate: '2026-10-10',
-    originLocation: 'Kyoto, Japan',
-    stage: 'Retailer',
-    updated: '21 Oct 2026, 14:20',
-    status: 'In Transit',
+    id: 'Manufacturer',
+    label: 'Manufacturer',
+    stepNumber: 1,
+    description: 'Origin facility records product creation, batch, and initial dispatch.',
+    role: 'Origin Facility',
   },
   {
-    id: 'PT-10471',
-    name: 'Organic Cotton T-Shirts',
-    manufacturer: 'Heritage Loom Works',
-    manufacturingDate: '2026-10-08',
-    originLocation: 'Coimbatore, India',
-    stage: 'Distributor',
-    updated: '20 Oct 2026, 09:45',
-    status: 'In Transit',
+    id: 'Distributor',
+    label: 'Distributor',
+    stepNumber: 2,
+    description: 'Regional logistics hub captures receipt, warehouse storage, and freight transfer.',
+    role: 'Logistics Partner',
   },
   {
-    id: 'PT-10455',
-    name: 'Extra Virgin Olive Oil',
-    manufacturer: 'Tuscan Groves Estate',
-    manufacturingDate: '2026-10-05',
-    originLocation: 'Florence, Italy',
-    stage: 'Customer',
-    updated: '19 Oct 2026, 18:05',
-    status: 'Delivered',
+    id: 'Retailer',
+    label: 'Retailer',
+    stepNumber: 3,
+    description: 'Retail facility logs inventory arrival, shelf verification, and pricing.',
+    role: 'Store Merchant',
   },
   {
-    id: 'PT-10440',
-    name: 'Wireless Headphones',
-    manufacturer: 'Aura Sound Technologies',
-    manufacturingDate: '2026-10-02',
-    originLocation: 'Taipei, Taiwan',
-    stage: 'Manufacturer',
-    updated: '18 Oct 2026, 11:12',
-    status: 'Registered',
-  },
-  {
-    id: 'PT-10428',
-    name: 'Herbal Shampoo 250ml',
-    manufacturer: 'Botanica Care Ltd.',
-    manufacturingDate: '2026-09-28',
-    originLocation: 'Marseille, France',
-    stage: 'Retailer',
-    updated: '17 Oct 2026, 16:38',
-    status: 'Verified',
+    id: 'Customer',
+    label: 'Customer',
+    stepNumber: 4,
+    description: 'Final buyer confirms delivery receipt and end-to-end journey closes.',
+    role: 'End Consumer',
   },
 ]
 
@@ -65,45 +43,63 @@ export function formatDateTime(date = new Date()) {
 }
 
 export function getStoredProducts() {
-  if (typeof window === 'undefined') return DEFAULT_PRODUCTS
+  if (typeof window === 'undefined') return []
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY)
-    if (!raw) {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_PRODUCTS))
-      return DEFAULT_PRODUCTS
-    }
+    if (!raw) return []
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed : DEFAULT_PRODUCTS
+    return Array.isArray(parsed) ? parsed.filter(Boolean) : []
   } catch (err) {
     console.error('Failed to read products from localStorage:', err)
-    return DEFAULT_PRODUCTS
+    return []
   }
+}
+
+export function getProductById(productId) {
+  if (!productId) return null
+  const normalized = String(productId).trim().toLowerCase()
+  const products = getStoredProducts()
+  return products.find((item) => (item?.id ? String(item.id).trim().toLowerCase() === normalized : false)) || null
 }
 
 export function isProductIdDuplicate(productId) {
   if (!productId) return false
-  const normalized = productId.trim().toLowerCase()
+  const normalized = String(productId).trim().toLowerCase()
   const current = getStoredProducts()
-  return current.some((item) => item.id.trim().toLowerCase() === normalized)
+  return current.some((item) => (item?.id ? String(item.id).trim().toLowerCase() === normalized : false))
 }
 
 export function saveProduct(productInput) {
   const current = getStoredProducts()
-  const normalizedId = productInput.productId.trim()
+  const normalizedId = String(productInput.productId || '').trim()
 
-  if (current.some((item) => item.id.trim().toLowerCase() === normalizedId.toLowerCase())) {
+  if (!normalizedId) {
+    return { success: false, error: 'Product ID is required.' }
+  }
+
+  if (current.some((item) => (item?.id ? String(item.id).trim().toLowerCase() === normalizedId.toLowerCase() : false))) {
     return { success: false, error: `Product ID "${normalizedId}" already exists.` }
   }
 
   const newProduct = {
     id: normalizedId,
-    name: productInput.productName.trim(),
-    manufacturer: productInput.manufacturer.trim(),
-    manufacturingDate: productInput.manufacturingDate,
-    originLocation: productInput.originLocation.trim(),
+    name: String(productInput.productName || '').trim(),
+    manufacturer: String(productInput.manufacturer || '').trim(),
+    manufacturingDate: productInput.manufacturingDate || '',
+    originLocation: String(productInput.originLocation || '').trim(),
     stage: 'Manufacturer',
     status: 'Registered',
     updated: formatDateTime(new Date()),
+    history: [
+      {
+        stage: 'Manufacturer',
+        status: 'Registered',
+        location: String(productInput.originLocation || '').trim(),
+        handler: String(productInput.manufacturer || '').trim(),
+        timestamp: formatDateTime(new Date()),
+        note: 'Product created and registered in tracking ledger.',
+      },
+    ],
   }
 
   const updated = [newProduct, ...current]
@@ -115,4 +111,60 @@ export function saveProduct(productInput) {
   }
 
   return { success: true, product: newProduct }
+}
+
+export function updateProductStage(productId, newStage, newStatus, location = '', handler = '') {
+  const current = getStoredProducts()
+  const normalizedId = String(productId).trim().toLowerCase()
+  const index = current.findIndex((item) => (item?.id ? String(item.id).trim().toLowerCase() === normalizedId : false))
+
+  if (index === -1) {
+    return { success: false, error: 'Product not found.' }
+  }
+
+  const existing = current[index]
+  const timestamp = formatDateTime(new Date())
+
+  const historyEntry = {
+    stage: newStage,
+    status: newStatus,
+    location: location || existing.originLocation || 'Regional Facility',
+    handler: handler || `${newStage} Operations`,
+    timestamp,
+    note: `Handover recorded at ${newStage} milestone.`,
+  }
+
+  const updatedProduct = {
+    ...existing,
+    stage: newStage,
+    status: newStatus,
+    updated: timestamp,
+    history: existing.history ? [...existing.history, historyEntry] : [historyEntry],
+  }
+
+  const updatedList = [...current]
+  updatedList[index] = updatedProduct
+
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedList))
+  } catch (err) {
+    console.error('Failed to update product in localStorage:', err)
+    return { success: false, error: 'Could not update product record.' }
+  }
+
+  return { success: true, product: updatedProduct }
+}
+
+// Generates a deterministic simulated hash for demonstrating cryptographic tamper-evidence
+export function generateRecordFingerprint(product) {
+  if (!product) return ''
+  const str = `${product.id}|${product.name}|${product.manufacturer}|${product.manufacturingDate}|${product.originLocation}`
+  let hash = 0
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i)
+    hash = (hash << 5) - hash + char
+    hash |= 0
+  }
+  const hex = Math.abs(hash).toString(16).padStart(8, '0')
+  return `0x${hex}7f8e3c${hex}9b2d4a1e6f0c8a5d`
 }
