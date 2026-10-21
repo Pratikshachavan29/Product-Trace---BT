@@ -1,3 +1,4 @@
+// ProductTrace Dashboard: dynamic statistics and supply chain tracking overview
 import { useState, useEffect, useMemo } from 'react'
 import { getStoredProducts, SUPPLY_CHAIN_STAGES } from '../utils/storage.js'
 
