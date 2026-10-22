@@ -121,7 +121,10 @@ export default function VerifyProduct({ onNavigate, navParams }) {
                   </svg>
                 </div>
                 <div>
-                  <div className="verify-badge verified">Authenticity Confirmed</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <span className="verify-badge verified">Authenticity Confirmed</span>
+                    {verifiedProduct.isDemo && <span className="demo-data-badge">Demo Data</span>}
+                  </div>
                   <h3 className="verify-title">Record Verified in Tracking Registry</h3>
                   <p className="verify-sub">
                     Matching origin records authenticated. Unique identifier matches registered manufacturing facility.

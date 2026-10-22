@@ -45,6 +45,17 @@ const items = [
       </svg>
     ),
   },
+  {
+    id: 'activity',
+    label: 'Activity History',
+    badge: null,
+    icon: (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="1.8" />
+        <polyline points="12 6 12 12 16 14" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
 ]
 
 export default function Sidebar({ currentPage, onNavigate, open }) {

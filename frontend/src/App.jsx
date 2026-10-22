@@ -4,12 +4,14 @@ import Dashboard from './pages/Dashboard.jsx'
 import RegisterProduct from './pages/RegisterProduct.jsx'
 import TrackProduct from './pages/TrackProduct.jsx'
 import VerifyProduct from './pages/VerifyProduct.jsx'
+import ActivityHistory from './pages/ActivityHistory.jsx'
 
 const pages = {
   dashboard: Dashboard,
   register: RegisterProduct,
   track: TrackProduct,
   verify: VerifyProduct,
+  activity: ActivityHistory,
 }
 
 export default function App() {

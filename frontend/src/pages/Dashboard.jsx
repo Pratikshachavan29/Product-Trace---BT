@@ -1,6 +1,12 @@
-// ProductTrace Dashboard: dynamic statistics and supply chain tracking overview
 import { useState, useEffect, useMemo } from 'react'
-import { getStoredProducts, SUPPLY_CHAIN_STAGES } from '../utils/storage.js'
+import {
+  getStoredProducts,
+  SUPPLY_CHAIN_STAGES,
+  loadDemoProducts,
+  removeDemoProducts,
+  DEMO_PRODUCT_IDS,
+} from '../utils/storage.js'
+import ActivityHistorySection from '../components/ActivityHistorySection.jsx'
 
 const statusClass = {
   'In Transit': 'badge-blue',
@@ -28,10 +34,11 @@ function matchStatus(product, category) {
   }
 
   if (category === 'verified') {
-    return statusClean.includes('verif')
+    return statusClean.includes('verif') || product.isVerified === true
   }
 
   if (category === 'registered') {
+    if (statusClean.includes('verif') || product.isVerified === true) return false
     if (statusClean.includes('register')) return true
     if (!statusClean && stageRaw === 'manufacturer') return true
     return false
@@ -44,6 +51,29 @@ export default function Dashboard({ onNavigate }) {
   const [products, setProducts] = useState(() => getStoredProducts())
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedStatus, setSelectedStatus] = useState('all')
+  const [demoFeedback, setDemoFeedback] = useState(null)
+
+  function handleLoadDemo() {
+    const res = loadDemoProducts()
+    if (res.success) {
+      setDemoFeedback({ type: 'success', text: res.message })
+      setProducts(getStoredProducts())
+    } else if (res.alreadyLoaded) {
+      setDemoFeedback({ type: 'info', text: res.message })
+    } else {
+      setDemoFeedback({ type: 'error', text: res.error || 'Failed to load demo products.' })
+    }
+  }
+
+  function handleRemoveDemo() {
+    const res = removeDemoProducts()
+    if (res.success) {
+      setDemoFeedback({ type: 'success', text: res.message })
+      setProducts(getStoredProducts())
+    } else {
+      setDemoFeedback({ type: 'info', text: res.message || 'No demo products to remove.' })
+    }
+  }
 
   useEffect(() => {
     setProducts(getStoredProducts())
@@ -116,6 +146,11 @@ export default function Dashboard({ onNavigate }) {
       return matchId || matchName || matchMfg || matchLoc || matchStage
     })
   }, [safeProducts, searchQuery, selectedStatus])
+
+  const isDemoLoaded = useMemo(() => {
+    const demoIds = new Set(DEMO_PRODUCT_IDS.map((id) => id.toLowerCase()))
+    return safeProducts.some((p) => p.isDemo === true || (p?.id && demoIds.has(String(p.id).trim().toLowerCase())))
+  }, [safeProducts])
 
   const dynamicStats = [
     {
@@ -209,6 +244,35 @@ export default function Dashboard({ onNavigate }) {
           <p>Real-time visibility from manufacturing source to end customer.</p>
         </div>
         <div className="dashboard-actions">
+          <button
+            className="btn btn-secondary btn-demo-action"
+            type="button"
+            onClick={handleLoadDemo}
+            title="Load 10 authentic sample products across supply-chain stages"
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6 }}>
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            Load Demo Products
+          </button>
+
+          {isDemoLoaded && (
+            <button
+              className="btn btn-secondary btn-remove-demo"
+              type="button"
+              onClick={handleRemoveDemo}
+              title="Remove sample demo products from the tracking ledger"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6 }}>
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+              </svg>
+              Remove Demo Products
+            </button>
+          )}
+
           <button className="btn btn-secondary" type="button" onClick={() => onNavigate('track')}>
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6 }}>
               <circle cx="11" cy="11" r="8" />
@@ -225,6 +289,29 @@ export default function Dashboard({ onNavigate }) {
           </button>
         </div>
       </div>
+
+      {/* Demo Feedback Notification */}
+      {demoFeedback && (
+        <div
+          className={`alert ${demoFeedback.type === 'error' ? 'alert-error' : demoFeedback.type === 'info' ? 'alert-info' : 'alert-success'} demo-feedback-alert`}
+          role="status"
+        >
+          <div>
+            <p className="alert-title">
+              {demoFeedback.type === 'error' ? 'Demo Action Error' : demoFeedback.type === 'info' ? 'Demo Notice' : '✓ Demo Data Updated'}
+            </p>
+            <p className="alert-desc">{demoFeedback.text}</p>
+          </div>
+          <button
+            type="button"
+            className="alert-dismiss-btn"
+            onClick={() => setDemoFeedback(null)}
+            aria-label="Dismiss notification"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Metric Cards Grid */}
       <div className="stat-grid">
@@ -431,7 +518,10 @@ export default function Dashboard({ onNavigate }) {
                         <span className="mono-pill">{displayId}</span>
                       </td>
                       <td>
-                        <span className="product-primary-name">{displayName}</span>
+                        <div className="product-name-cell">
+                          <span className="product-primary-name">{displayName}</span>
+                          {product?.isDemo && <span className="demo-data-badge">Demo Data</span>}
+                        </div>
                       </td>
                       <td>
                         <span className="location-cell">
@@ -473,6 +563,9 @@ export default function Dashboard({ onNavigate }) {
           </div>
         )}
       </section>
+
+      {/* Real-Time Product Activity History Feed */}
+      <ActivityHistorySection onNavigate={onNavigate} title="Real-Time Product Activity Feed" />
     </section>
   )
 }

@@ -402,7 +402,10 @@ export default function TrackProduct({ onNavigate, navParams }) {
           <div className="card product-summary-card">
             <div className="product-summary-header">
               <div>
-                <div className="product-id-tag mono-pill">{activeProduct.id}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  <span className="product-id-tag mono-pill">{activeProduct.id}</span>
+                  {activeProduct.isDemo && <span className="demo-data-badge">Demo Data</span>}
+                </div>
                 <h3 className="product-headline">{activeProduct.name}</h3>
                 <p className="product-subline">
                   Manufacturer: <strong>{activeProduct.manufacturer}</strong> &bull; Origin: {activeProduct.originLocation}
